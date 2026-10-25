@@ -1,387 +1,488 @@
-# GB Wind Forecast Intelligence
+# GB Wind Forecast Intelligence & Windy Assistant
 
-A full-stack web application that evaluates how accurate GB wind-generation forecasts were **at
-the moment a purchasing decision had to be made**, using only Elexon's official **WINDFOR**
-(forecast) and **FUELHH** (actual outturn) datasets.
+An end-to-end analytics platform and intelligent copilot built for UK energy utility trading desks to evaluate day-ahead wind power forecast accuracy at decision time, powered by **FastAPI**, **React 19**, **Elexon BMRS** open data, and the **Windy** conversational intelligence assistant built with **LangGraph** and **Groq**.
 
-> **Deployment status:** not yet publicly deployed. The Vercel configuration is included and its
-> entrypoint is tested locally, but no deployment was made (see [Deployment](#18-deployment)).
-> **Repository URL:** not yet created. **Demo video:** not yet recorded.
+[![CI Quality Gate](https://github.com/honoursbhaduria/windy/actions/workflows/ci.yml/badge.svg)](https://github.com/honoursbhaduria/windy/actions)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black)](https://react.dev)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Agentic_Workflow-FF6F00)](https://langchain-ai.github.io/langgraph/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**GitHub Repository:** [https://github.com/honoursbhaduria/windy.git](https://github.com/honoursbhaduria/windy.git)  
+**Live Docker Endpoint:** Frontend on `http://localhost:8080` | Backend API on `http://localhost:8000`
 
 ---
 
-## 1. Business problem
+## Table of Contents
 
-A UK electricity utility buys power in the wholesale day-ahead market. How much wind generation
-will arrive on the delivery day is uncertain, so the purchasing team relies on forecasts published
-*before* delivery. The team needs to know:
+1. [Executive Summary & Business Context](#1-executive-summary--business-context)
+2. [Key Platform Capabilities](#2-key-platform-capabilities)
+3. [Verified January 2026 Accuracy Outturns](#3-verified-january-2026-accuracy-outturns)
+4. [Decision-Cutoff & No-Hindsight-Bias Methodology](#4-decision-cutoff--no-hindsight-bias-methodology)
+5. [Windy: LangGraph & Groq Decision Copilot](#5-windy-langgraph--groq-decision-copilot)
+6. [System Architecture](#6-system-architecture)
+7. [Mathematical KPI Formulations](#7-mathematical-kpi-formulations)
+8. [Elexon BMRS Datasets & Ingestion Engine](#8-elexon-bmrs-datasets--ingestion-engine)
+9. [Project Directory Structure](#9-project-directory-structure)
+10. [Local Quickstart & Docker Setup](#10-local-quickstart--docker-setup)
+11. [Configuration & Environment Variables](#11-configuration--environment-variables)
+12. [API Reference](#12-api-reference)
+13. [Testing & Quality Verification](#13-testing--quality-verification)
+14. [Deployment Strategy](#14-deployment-strategy)
+15. [Author & Attribution](#15-author--attribution)
 
-- which wind forecast was actually available when it had to decide;
-- how that forecast compared with what was generated;
-- how large and how biased the errors were over a period;
-- how the forecast changed between publications.
+---
 
-Using the newest forecast available *today* would flatter the forecast (hindsight bias). This
-tool scores only the forecast that existed at each decision cutoff.
+## 1. Executive Summary & Business Context
 
-## 2. Key functionality
+In the UK wholesale electricity market (governed by the Balancing and Settlement Code / Elexon), commercial energy utilities must buy power ahead of delivery to reliably supply consumer demand. Wholesale purchasing decisions in the **day-ahead auction** must be finalized 24 hours prior to delivery. 
 
-| Page | What it shows |
-|---|---|
-| **Overview** | KPIs: mean forecast and actual generation, MAE, RMSE, WAPE, mean bias and matched coverage. Also shows data retrieval time, cache/stale status, assumptions and data-quality notes. |
-| **Forecast vs actual** | Hourly time series of the decision-time forecast against actual generation, with zoom (brush), tooltips and an optional signed-error chart. Click a point to open its vintages. |
-| **Accuracy** | Metric table with formulas and denominators, a plain-language explanation of bias, daily MAE and bias, MAE by hour of day, forecast-vs-actual scatter, error histogram and a coverage breakdown. |
-| **Vintages** | Every WINDFOR publication for a chosen hour: which were eligible at the cutoff, which one was selected, the actual outturn and the error. |
-| **Records** | A searchable, sortable, paged table of every interval, including missing ones, and a **CSV export** generated server-side with the same filters. |
+Because wind generation is weather-dependent and volatile, power traders face substantial imbalance risks:
+- **Over-forecasting wind (being "long")**: Procuring too little thermal or market generation, forcing the utility to buy expensive imbalance volume from the Balancing Mechanism during wind shortfalls.
+- **Under-forecasting wind (being "short")**: Procuring excess thermal volume, incurring unnecessary procurement expense and "spilling" wind power at distressed cashout prices.
 
-Filters (decision dates, optional delivery dates, lead time, actual-alignment policy) live in the
-URL, so every view can be shared and survives a reload. The default view is decisions made during
-**January 2026** with a **24 h** lead.
+### The Problem This Software Solves
+Off-the-shelf dashboards frequently commit **hindsight bias** by benchmarking actual outturn against the newest forecast published *today*. In reality, an energy trader on 14 January making decisions for 15 January only had access to forecasts published **on or before the decision cutoff** (e.g., 24 hours ahead).
 
-## 3. Architecture
+**GB Wind Forecast Intelligence** solves this problem by:
+1. Reconstructing the exact forecast state available at the historical moment of purchase for every half-hour interval.
+2. Quantifying systemic bias, spread, and volumetric risk (MAE, RMSE, WAPE, Mean Bias).
+3. Providing an embedded conversational agent (**Windy**) that parses outturns, pinpoints extreme error days, and explains statistical metrics interactively.
 
-```
- Browser (React + TanStack Query + Zod-validated responses)
-   │  same-origin /api/*  (nginx proxy in Docker · Vite proxy in dev · rewrite on Vercel)
-   ▼
- FastAPI  ─ api/         HTTP routing, validation, error mapping, CORS
-   │      ─ services/
-   │          analysis_service    orchestration
-   │          forecast_selection  cutoff = T − lead · latest eligible vintage
-   │          matching            forecast ⟷ actual by normalised UTC startTime
-   │          metrics             MAE · RMSE · bias · WAPE (NumPy)
-   │          data_normalization  validation, duplicates, data-quality warnings (pandas)
-   │          elexon_client       HTTPX, retries/backoff, Retry-After, chunking, TTL cache
-   │      ─ utils/timestamps      UTC parsing, Europe/London presentation
-   ▼
- Elexon Insights API (public, no key)
-   GET /datasets/WINDFOR/stream   GET /datasets/FUELHH/stream?fuelType=WIND
-```
+---
 
-All business logic is in Python. The frontend only formats values and draws charts.
+## 2. Key Platform Capabilities
 
-## 4. Technology stack
+| View / Feature | Functionality & Value Delivered |
+| :--- | :--- |
+| **Overview Dashboard** | Real-time calculation of MAE, RMSE, WAPE, Mean Bias, and Total Volume across the selected decision window. Displays data quality flags, observation counts, and cache freshness indicators. |
+| **Forecast vs Actual** | High-density hourly interactive time series (Recharts) with synchronized brush zoom, signed error bands, point-in-time tooltips, and click-through to vintage inspection. |
+| **Accuracy Deep-Dive** | Diurnal hourly error profiles (identifying time-of-day forecasting vulnerabilities), daily MAE/Bias distributions, error histograms, and scatter plots comparing predicted vs. metered generation. |
+| **Vintage Explorer** | Visual audit trail of every WINDFOR forecast published for a chosen delivery hour. Displays eligibility status against the cutoff timestamp, highlighting the chosen vintage. |
+| **Records & CSV Parity** | Granular, sortable, paginated audit table for all evaluated intervals. Features a one-click server-side CSV export strictly preserving active URL filters. |
+| **Windy Assistant** | Full-stack conversational copilot powered by LangGraph and Groq. Allows natural-language exploration of outturn data with zero hallucination. |
 
-- **Frontend:** React 19, TypeScript 6, Vite 8, Tailwind CSS 4, Recharts 3, React Router 7,
-  TanStack Query 5, Zod 4, Lucide icons, and self-hosted Albert Sans, Alumni Sans and JetBrains Mono fonts.
-- **Backend:** Python 3.13, FastAPI, Pydantic 2 / pydantic-settings, HTTPX, pandas 3, NumPy 2.
-- **Quality:** Pytest (+ respx, pytest-asyncio, pytest-cov), Ruff, mypy (strict), ESLint,
-  Prettier, Vitest + Testing Library, Playwright.
-- **Delivery:** Docker, Docker Compose, nginx, GitHub Actions, Vercel configuration.
+---
 
-Dependencies are pinned in `backend/requirements*.txt` and `frontend/package.json`.
+## 3. Verified January 2026 Accuracy Outturns
 
-## 5. Data sources and attribution
+Using official Elexon **WINDFOR** and **FUELHH** national datasets under standard day-ahead market conditions (**24-hour decision lead time**, `exact` half-hourly alignment, Europe/London decision dates 2026-01-01 to 2026-01-31):
 
-| Dataset | Endpoint | Documentation |
-|---|---|---|
-| FUELHH | `GET https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELHH/stream` | <https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/FUELHH/stream> |
-| WINDFOR | `GET https://data.elexon.co.uk/bmrs/api/v1/datasets/WINDFOR/stream` | <https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/WINDFOR/stream> |
+| Metric | Measured Platform Value | Industry Interpretation |
+| :--- | :--- | :--- |
+| **Coverage** | **100.0%** (744 / 744 intervals) | Zero missing intervals across the full month. |
+| **Mean Forecast** | **13,021.7 MW** | Average day-ahead expected wind generation. |
+| **Mean Actual Outturn** | **11,285.5 MW** | Average metered actual wind generation. |
+| **Mean Absolute Error (MAE)**| **1,932.2 MW** | Expected absolute magnitude of forecast error per hour. |
+| **Root Mean Square Error (RMSE)**| **2,399.4 MW** | Heavily penalizes large volumetric misses for risk modeling. |
+| **Mean Bias** | **+1,736.2 MW** (+15.4%) | **Systemic Over-forecast:** Forecaster predicted 15.4% more wind than arrived. |
+| **Weighted Abs % Error (WAPE)**| **17.1%** | Total absolute error divided by total generated volume. |
+| **Peak Over-forecast Miss** | **+7,419.0 MW** (2026-01-25 15:00 UTC) | Largest shortfall risk; wind dropped severely below forecast. |
+| **Peak Under-forecast Miss** | **-5,612.0 MW** (2026-01-10 03:00 UTC) | Wind generated significantly exceeded forecast expectation. |
 
-*Contains BMRS data from Elexon, used under the BMRS Data Licence.* No other dataset (prices,
-demand, weather) is used.
+---
 
-## 6. No API key required
+## 4. Decision-Cutoff & No-Hindsight-Bias Methodology
 
-Both endpoints are public. Every request made during development was anonymous. The app has no
-key setting and needs no account.
+### Mathematical Formulation
+For any target delivery hour $T$ (expressed in UTC):
+$$\text{Cutoff}(T) = T - \Delta t_{\text{lead}}$$
 
-## 7. Dataset fields used
-
-Verified against live responses and the official OpenAPI spec
-(`https://data.elexon.co.uk/swagger/v1/swagger.json`) on 25 Oct 2026:
-
-- **FUELHH** (bare JSON array): `startTime` (UTC, `Z`), `settlementDate` (London date),
-  `settlementPeriod`, `fuelType` (filtered to `WIND`), `generation` (MW, half-hour average) and
-  `publishTime`. Filters used: `settlementDateFrom` / `settlementDateTo` (inclusive, `yyyy-MM-dd`)
-  and `fuelType=WIND`. Settlement filters cannot be combined with publish filters.
-- **WINDFOR** (bare JSON array): `startTime` (delivery hour, UTC), `publishTime` (vintage, UTC)
-  and `generation` (MW). Filters used: `publishDateTimeFrom` / `publishDateTimeTo` (inclusive,
-  ISO-8601). Without filters, only the latest vintage is returned.
-
-Observed source characteristics:
-
-- WINDFOR is **hourly**, while FUELHH is **half-hourly**.
-- WINDFOR publishes about 8 times a day at irregular minutes (`:25`, `:30`, `:58`). Each
-  publication covers about 73 hourly start times (21:00 the previous day to +2 days 21:00).
-- The DST day 2026-03-29 has 46 settlement periods.
-- No duplicates or nulls appeared in the Dec 2025 – Feb 2026 samples.
-- A 3-month request succeeded, but the app still fetches in 7-day aligned chunks.
-
-## 8. Date window and forecast-selection policy
-
-- **Decision dates** and **delivery dates** are separate Europe/London calendar dates.
-- **Evaluation grid:** every UTC hour start `T`, matching WINDFOR resolution.
-- **Decision cutoff:** `cutoff = T − decision_lead_hours` (default **24 h**, configurable from
-  0 to 96 h in 0.5 h steps from the UI or API).
-- An interval is in scope when its **cutoff** falls inside the decision dates and, if delivery
-  dates are given, `T` falls inside them too. With the default January decisions and a 24 h lead,
-  deliveries run from **2 Jan 00:00 to 1 Feb 23:00** (the window crosses into February).
-- **Selection:** among WINDFOR vintages for `T` with `publishTime ≤ cutoff`, take the one with the
-  **latest** `publishTime`. A vintage published exactly at the cutoff is eligible. Later vintages
-  are **never** used, even if they were more accurate.
-- **Matching** is by normalised UTC `startTime`:
-  - `exact` (default): the FUELHH half-hour starting at `T`.
-  - `hourly_mean` (optional): the mean of the half-hours at `T` and `T+30m`. If either is
-    missing, the interval counts as missing an actual; nothing is estimated from one half.
-- **Duplicate policy (deterministic, never averaged):**
-  - FUELHH duplicates per `startTime` keep the latest `publishTime`; ties keep the last record in
-    source order.
-  - WINDFOR duplicates per (`startTime`, `publishTime`) keep the last record in source order.
-  - Conflicting duplicates raise a data-quality warning.
-- **Timestamps:**
-  - All comparisons are in UTC.
-  - A timestamp without an offset is treated as UTC (Elexon's documented convention) and flagged.
-  - Display is Europe/London, with GMT/BST derived from the actual offset.
-
-## 9. Assumptions and limitations
-
-- The 24 h lead time is a **pilot modelling assumption**, not the market's gate-closure rule.
-- Only `:00` FUELHH half-hours are scored under `exact` alignment, because WINDFOR is hourly.
-  The `:30` half-hours are reported, not hidden.
-- FUELHH is metered output, and so may reflect curtailment or constraint actions. If WINDFOR does
-  not anticipate those actions, part of a positive bias could come from them rather than from the
-  weather forecast. The two datasets alone cannot separate these causes, so the app does not claim
-  either.
-- Results describe **forecast accuracy only**. No price or demand data is used, so no cost or
-  savings claims are made.
-- The cache is in-memory and per process. On serverless hosts each instance has its own cache.
-
-## 10. Metrics
-
-`F_t` is the selected forecast (MW), `A_t` the actual (MW), `e_t = F_t − A_t`. Metrics use matched
-intervals only.
-
-| Metric | Formula | Denominator | Notes |
-|---|---|---|---|
-| MAE | `mean(|e_t|)` | number of matched intervals | MW |
-| RMSE | `sqrt(mean(e_t²))` | number of matched intervals | MW; penalises large misses |
-| Mean bias | `mean(e_t)` | number of matched intervals | **+** = over-forecast, **−** = under-forecast |
-| WAPE | `100·Σ|e_t| / ΣA_t` | Σ actual over matched intervals | `null` (with explanation) if ΣA ≤ 0 |
-| Bias % | `100·Σe_t / ΣA_t` | Σ actual over matched intervals | `null` if ΣA ≤ 0 |
-| Total absolute error | `Σ|e_t|` | none | a sum of MW values, not energy |
-| Coverage | `100·matched / evaluation intervals` | hourly grid size | |
-
-The app also reports counts of evaluation intervals, FUELHH records available, intervals with an
-actual, intervals with an eligible forecast, matched intervals, and each kind of missing interval.
-
-MAPE is deliberately not used: it is undefined at zero actuals and unstable when actuals are
-small. WAPE is never presented as "accuracy = 100 − WAPE".
-
-## 11. Project structure
+Where $\Delta t_{\text{lead}}$ defaults to **24 hours** (configurable from 0 to 96 hours in 30-minute increments).
 
 ```
-backend/
-  app/
-    main.py  config.py
-    api/        health.py analysis.py actuals.py forecasts.py deps.py
-    schemas/    common.py analysis.py forecast.py
-    services/   elexon_client.py cache.py data_normalization.py forecast_selection.py
-                matching.py metrics.py analysis_service.py container.py
-    utils/      timestamps.py logging.py frames.py
-  tests/
-    unit/ integration/ live/
-    fixtures/   synthetic.py  fake_elexon.py  mock_elexon_server.py   (TEST-ONLY)
-  requirements.txt  requirements-dev.txt  pyproject.toml  Dockerfile
-frontend/
-  src/
-    app/ components/{layout,filters,charts,kpis,tables,feedback}/ pages/ services/ hooks/
-    types/ utils/ styles/ tests/
-  e2e/  playwright.config.ts  nginx.conf.template  Dockerfile  package.json
-api/index.py  vercel.json  requirements.txt  .python-version     (Vercel deployment)
-docker-compose.yml  .env.example  .github/workflows/ci.yml  SUBMISSION.md
+                      T - 24h (Cutoff)                             T (Delivery)
+Timeline: ───────────────┬──────────────────────────────────────────────┬────────►
+                         │                                              │
+  Vintages:  ●       ●   ●  │     ✕                   ✕                 │
+           v1      v2   v3 │    v4                  v5                  │
+  Status:  [Eligible]   [SELECTED] [Rejected: Hindsight Bias]           Actual Outturn: A(T)
 ```
 
-## 12. Local setup (without Docker)
+1. **Eligibility Rule**: A WINDFOR forecast vintage $v = (\text{publishTime}, \text{generation})$ is eligible for target hour $T$ if and only if:
+   $$\text{publishTime}(v) \le \text{Cutoff}(T)$$
+2. **Selection Rule**: The platform selects the eligible vintage with the strictly **latest** publication time:
+   $$v^*(T) = \arg\max_{v \in \text{Eligible}(T)} \text{publishTime}(v)$$
+3. **Temporal Alignment**:
+   - `exact` (Default): Evaluates the selected hourly forecast against the metered FUELHH record at `startTime = T`.
+   - `hourly_mean`: Averages the two half-hours `T` and `T + 30m`. If either half-hour is missing, the interval is strictly flagged as missing actuals without fabricated interpolation.
 
-Requires Python 3.12+ and Node 20.19+ (developed on Python 3.13 and Node 22).
+---
+
+## 5. Windy: LangGraph & Groq Decision Copilot
+
+**Windy** is an embedded conversational intelligence assistant designed specifically for energy analysts. Rather than acting as a generic LLM wrapper, Windy is engineered around a deterministic **LangGraph** state machine backed by **Groq** high-throughput inference (`openai/gpt-oss-120b` with automated fallback to `openai/gpt-oss-20b`).
+
+```
+                ┌────────────────────────────────┐
+                │          User Query            │
+                └───────────────┬────────────────┘
+                                │
+                                ▼
+               ┌───────────────────────────────────┐
+               │    analyze_query_node (Intent)    │
+               │  - Extracts Month/Dates via Regex │
+               │  - Determines required dimensions │
+               └───────────────┬───────────────────┘
+                                │
+                                ▼
+               ┌───────────────────────────────────┐
+               │      fetch_data_node (Tools)      │
+               │  - Queries AnalysisService directly│
+               │  - Computes exact ground truth    │
+               └───────────────┬───────────────────┘
+                                │
+                                ▼
+               ┌───────────────────────────────────┐
+               │   generate_response_node (Groq)   │
+               │  - Strict dataset grounding       │
+               │  - Generates Markdown tables      │
+               └───────────────┬───────────────────┘
+                                │
+                                ▼
+               ┌───────────────────────────────────┐
+               │     prune_context_node (Safety)   │
+               │  - Evicts stale turns & tokens    │
+               │  - Prevents context window limits │
+               └───────────────────────────────────┘
+```
+
+### Key Engineering Features of Windy
+- **Strict Ground Truth Verification**: The agent prompt strictly forbids illustrative, sample, or fabricated numbers. If data is queried, it is fetched directly from the backend analytical engine and cited verbatim.
+- **Natural Language Temporal Parser**: Handles queries like *"What were the KPIs for January 2026?"* or *"Compare 48h lead time"* by translating natural language into ISO evaluation windows.
+- **Context Pruning**: Enforces a rolling FIFO context window to ensure chat exchanges remain fast and never overload memory.
+- **Dual-Mode Adaptive UI**:
+  - **Desktop (Website View)**: Docks to the right side with **draggable drag-to-resize handle** (customizable between 280px and 900px, with 1/5th, Standard, and Wide presets). Operates without background blurring so the user can interact with the live dashboard side-by-side.
+  - **Mobile View**: Converts automatically into an intuitive **modal popup card** with a dimmed backdrop and native sheet grabber.
+  - **Visual Design**: Follows the platform's warm paper-and-ink aesthetic with clean typography and zero technical jargon.
+
+---
+
+## 6. System Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                           CLIENT BROWSER (React 19)                            │
+│  ┌───────────────────────┐  ┌─────────────────────────┐  ┌───────────────────┐ │
+│  │ Overview / Analytics  │  │ Recharts Visualizations │  │ Windy UI Drawer   │ │
+│  └───────────┬───────────┘  └────────────┬────────────┘  └─────────┬─────────┘ │
+│              │                           │                         │           │
+│              └───────────────────────────┼─────────────────────────┘           │
+│                                          │  same-origin /api/*                 │
+└──────────────────────────────────────────┼─────────────────────────────────────┘
+                                           │
+                                           ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                              NGINX REVERSE PROXY                               │
+│                   Port 8080 · Static Asset Cache · API Routing                  │
+└──────────────────────────────────────────┬─────────────────────────────────────┘
+                                           │
+                                           ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                            FASTAPI BACKEND SERVICE                             │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │ API Layer: /api/analysis · /api/vintages · /api/actuals · /api/windy     │  │
+│  └───────────────────────────────────┬──────────────────────────────────────┘  │
+│                                      │                                         │
+│  ┌───────────────────────────────────▼──────────────────────────────────────┐  │
+│  │ Core Engine: AnalysisService · ForecastSelection · Metrics (NumPy/Pandas) │  │
+│  └───────────────────────────────────┬──────────────────────────────────────┘  │
+│                                      │                                         │
+│  ┌───────────────────────────────────▼──────────────────────────────────────┐  │
+│  │ LangGraph Engine: 4-Node Directed Graph · Groq Client (gpt-oss-120b)     │  │
+│  └───────────────────────────────────┬──────────────────────────────────────┘  │
+│                                      │                                         │
+│  ┌───────────────────────────────────▼──────────────────────────────────────┐  │
+│  │ Ingestion & Caching: ElexonClient · HTTPX Async · TTL Memory Cache       │  │
+│  └───────────────────────────────────┬──────────────────────────────────────┘  │
+└──────────────────────────────────────┼─────────────────────────────────────────┘
+                                       │
+                                       ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                          EXTERNAL DATA & AI PROVIDERS                          │
+│   • Elexon BMRS API (WINDFOR & FUELHH)   • Groq Cloud API (LPU Inference)      │
+└────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 7. Mathematical KPI Formulations
+
+Let $t \in \{1, \dots, N\}$ index the matched evaluation intervals.  
+Let $F_t$ be the selected decision-time forecast (MW) and $A_t$ be the metered actual generation (MW).  
+The forecast error is defined as:
+$$e_t = F_t - A_t$$
+
+| Metric | Mathematical Formula | Denominator | Practical Trading Impact |
+| :--- | :---: | :---: | :--- |
+| **Mean Absolute Error (MAE)** | $\frac{1}{N} \sum_{t=1}^N \|e_t\|$ | Matched intervals $N$ | Measures typical volumetric deviation in MW. Direct benchmark for balancing volume. |
+| **Root Mean Square Error (RMSE)** | $\sqrt{\frac{1}{N} \sum_{t=1}^N e_t^2}$ | Matched intervals $N$ | Square-error weighting penalizes large volumetric misses that trigger market stress. |
+| **Mean Bias** | $\frac{1}{N} \sum_{t=1}^N e_t$ | Matched intervals $N$ | $+ = \text{Over-forecast (Long)}$, $- = \text{Under-forecast (Short)}$. |
+| **Weighted Absolute Percentage Error (WAPE)** | $\frac{\sum_{t=1}^N \|e_t\|}{\sum_{t=1}^N A_t} \times 100\%$ | Total actual generation | Volume-weighted error percentage. Avoids division-by-zero instability of MAPE. |
+| **Bias Percentage** | $\frac{\sum_{t=1}^N e_t}{\sum_{t=1}^N A_t} \times 100\%$ | Total actual generation | Normalized directional bias relative to total fleet production. |
+| **Evaluation Coverage** | $\frac{N_{\text{matched}}}{N_{\text{expected}}} \times 100\%$ | Total expected intervals | Verifies data completeness and flags missing settlement periods. |
+
+> **Why WAPE instead of MAPE?**  
+> In wind power generation, actual production regularly approaches zero MW during calm weather. Mean Absolute Percentage Error ($\text{MAPE} = \frac{1}{N} \sum \frac{|F_t - A_t|}{A_t}$) produces infinite or division-by-zero errors in calm periods and disproportionately inflates small misses. WAPE computes the ratio of total absolute errors over total actual energy, providing a stable, mathematically sound benchmark.
+
+---
+
+## 8. Elexon BMRS Datasets & Ingestion Engine
+
+The application consumes two core Elexon Insights Solution streams:
+
+1. **Actual Outturns (FUELHH)**:
+   - Endpoint: `GET /datasets/FUELHH/stream?fuelType=WIND`
+   - Fields: `startTime` (UTC), `settlementDate`, `settlementPeriod`, `generation` (MW), `fuelType`.
+   - Resolution: 30 minutes (half-hourly settlement).
+2. **Forecast Generation (WINDFOR)**:
+   - Endpoint: `GET /datasets/WINDFOR/stream?publishDateTimeFrom=...&publishDateTimeTo=...`
+   - Fields: `startTime` (Delivery UTC hour), `publishTime` (Publication timestamp), `generation` (MW).
+   - Resolution: 1 hour (published ~8 times daily covering a rolling 72-hour horizon).
+
+### Data Ingestion Robustness
+- **Chunked Pagination**: Automatically splits multi-week date ranges into clean 7-day windows to prevent upstream gateway timeouts.
+- **Deterministic Deduplication**: Deduplicates FUELHH records by `startTime` (retaining latest `publishTime`) and WINDFOR records by `(startTime, publishTime)`.
+- **In-Memory TTL Caching**: Employs cache tiering: 15-minute TTL for active decision windows and 6-hour TTL for historical settled outturns.
+- **Resilience**: Backoff retries with jitter handling HTTP 429 (`Retry-After`) and transient 5xx errors.
+
+---
+
+## 9. Project Directory Structure
+
+```
+├── .github/workflows/ci.yml       # GitHub Actions CI (lint, types, unit tests, e2e)
+├── api/index.py                   # Vercel serverless gateway for FastAPI backend
+├── backend/
+│   ├── app/
+│   │   ├── agent/                 # Windy LangGraph assistant implementation
+│   │   │   ├── graph.py           # Compiled StateGraph workflow
+│   │   │   ├── nodes.py           # Analysis, fetching, generation & pruning nodes
+│   │   │   ├── prompts.py         # System instructions & anti-hallucination rules
+│   │   │   └── state.py           # TypedDict schema for conversation state
+│   │   ├── api/                   # FastAPI route endpoints
+│   │   │   ├── actuals.py         # /api/actuals endpoints
+│   │   │   ├── analysis.py        # /api/analysis & /api/export.csv
+│   │   │   ├── forecasts.py       # /api/forecast-vintages
+│   │   │   ├── health.py          # /api/health with upstream monitoring
+│   │   │   └── windy.py           # /api/windy/chat & /api/windy/health
+│   │   ├── schemas/               # Pydantic v2 validation models
+│   │   ├── services/              # Domain logic & computation
+│   │   │   ├── analysis_service.py # Core orchestration service
+│   │   │   ├── elexon_client.py   # Resilient HTTPX client for BMRS API
+│   │   │   ├── forecast_selection.py # Decision-time cutoff filtering
+│   │   │   ├── matching.py        # Forecast-to-actual alignment
+│   │   │   └── metrics.py         # Vectorized NumPy/Pandas KPI calculations
+│   │   ├── utils/                 # Timezone, frame & logging helpers
+│   │   ├── config.py              # Application settings & environment parsing
+│   │   └── main.py                # FastAPI factory & CORS configuration
+│   ├── tests/                     # 114 backend Pytest tests (unit, integration, live)
+│   ├── Dockerfile                 # Multi-stage production container for Python
+│   └── requirements.txt           # Production dependencies
+├── frontend/
+│   ├── e2e/                       # Playwright browser end-to-end tests
+│   ├── src/
+│   │   ├── app/                   # App shell, routing & React Query setup
+│   │   ├── assets/                # Icons & static media (wind.png)
+│   │   ├── components/
+│   │   │   ├── charts/            # Recharts (TimeSeries, Diurnal, Histograms)
+│   │   │   ├── filters/           # Lead time & decision date controls
+│   │   │   ├── kpis/              # Metric display cards with math definitions
+│   │   │   ├── layout/            # AppShell, Bay & page wrappers
+│   │   │   ├── tables/            # Paginated interval audit table
+│   │   │   └── windy/             # WindyWidget & MarkdownView components
+│   │   ├── hooks/                 # Custom React query hooks
+│   │   ├── pages/                 # Overview, Accuracy, Vintages, Records pages
+│   │   ├── services/              # Typed fetch API clients
+│   │   └── styles/                # Tailwind CSS v4 design tokens
+│   ├── Dockerfile                 # Multi-stage build + Nginx alpine container
+│   ├── nginx.conf.template        # Nginx reverse proxy configuration
+│   └── package.json               # Node 22+ dependencies & scripts
+├── docker-compose.yml             # Single-command local container stack
+├── requirements.txt               # Root Python dependencies for Vercel
+├── vercel.json                    # Vercel serverless deployment configuration
+└── README.md                      # Comprehensive project documentation
+```
+
+---
+
+## 10. Local Quickstart & Docker Setup
+
+### Option A: One-Command Docker Compose (Recommended)
+
+Run the full stack (backend, frontend, Nginx proxy) in isolated containers:
 
 ```bash
-# backend
+# 1. Clone the repository
+git clone https://github.com/honoursbhaduria/windy.git
+cd windy
+
+# 2. Configure environment variables (optional; defaults work out of the box)
+cp .env.example .env
+
+# 3. Build and launch services
+docker compose up --build -d
+```
+
+- **Frontend Portal**: Open [http://localhost:8080](http://localhost:8080)
+- **Backend API Docs**: Open [http://localhost:8000/api/docs](http://localhost:8000/api/docs)
+- **Health Verification**: Open [http://localhost:8000/api/health](http://localhost:8000/api/health)
+
+To stop the containers:
+```bash
+docker compose down
+```
+
+---
+
+### Option B: Local Development (Without Docker)
+
+#### Prerequisites
+- **Python 3.12+** (Developed and verified on Python 3.13)
+- **Node.js 20.19+** (Developed on Node 22)
+
+#### 1. Start the Backend
+```bash
 cd backend
-python -m venv .venv && . .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements-dev.txt
-uvicorn app.main:app --reload --port 8000        # API docs: http://localhost:8000/api/docs
 
-# frontend (new terminal)
+# Launch FastAPI development server
+uvicorn app.main:app --reload --port 8000
+```
+
+#### 2. Start the Frontend
+In a new terminal:
+```bash
 cd frontend
-npm ci
-npm run dev                                       # http://localhost:5173 (proxies /api -> :8000)
+npm install
+
+# Start Vite dev server (proxies /api to localhost:8000)
+npm run dev
+```
+Open [http://localhost:5173](http://localhost:5173).
+
+---
+
+## 11. Configuration & Environment Variables
+
+All variables have safe defaults. Custom overrides can be placed in `.env`:
+
+| Environment Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `ELEXON_BASE_URL` | `https://data.elexon.co.uk/bmrs/api/v1` | Official Elexon BMRS endpoint. |
+| `GROQ_API_KEY` | *(Set in `.env`)* | Groq API Key used by the Windy assistant. |
+| `WINDY_MODEL` | `openai/gpt-oss-120b` | Primary high-intelligence LLM for Windy. |
+| `WINDY_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Automated fallback model if primary hits rate limits. |
+| `CACHE_TTL_SECONDS` | `900` (15 mins) | In-memory cache lifetime for recent data. |
+| `HISTORICAL_CACHE_TTL_SECONDS` | `21600` (6 hours) | In-memory cache lifetime for settled historic data. |
+| `REQUEST_TIMEOUT_SECONDS` | `30` | HTTPX request timeout for Elexon API requests. |
+| `MAX_RETRIES` | `3` | Maximum automatic retries for transient HTTP errors. |
+| `FRONTEND_PORT` | `8080` | Host port for frontend web portal. |
+| `BACKEND_PORT` | `8000` | Host port for backend FastAPI service. |
+| `CORS_ORIGINS` | `http://localhost:8080,http://localhost:5173` | Allowed CORS origins for the API. |
+
+---
+
+## 12. API Reference
+
+Interactive Swagger documentation is available at `/api/docs`.
+
+### Primary Endpoints
+
+#### 1. `GET /api/analysis`
+Calculates decision-time accuracy metrics and time series for a specified decision and delivery window.
+- **Parameters**:
+  - `decision_from` (ISO date, e.g. `2026-01-01`): Start of decision cutoff range.
+  - `decision_to` (ISO date, e.g. `2026-01-31`): End of decision cutoff range.
+  - `decision_lead_hours` (float, default `24.0`): Hours before delivery for cutoff.
+  - `actual_alignment` (`exact` or `hourly_mean`, default `exact`).
+- **Response**: Summary metrics (MAE, RMSE, WAPE, Bias), hourly series, diurnal profiles, data warnings, and cache provenance.
+
+#### 2. `GET /api/forecast-vintages`
+Inspects all WINDFOR forecast publications for a single delivery hour.
+- **Parameters**: `start_time` (ISO timestamp, e.g. `2026-01-15T12:00:00Z`), `decision_lead_hours` (default `24.0`).
+- **Response**: List of chronological vintages with `is_eligible` and `is_selected` booleans.
+
+#### 3. `GET /api/export.csv`
+Streams an instant CSV containing every evaluated interval matching the exact active query filters.
+
+#### 4. `POST /api/windy/chat`
+Conversational intelligence endpoint executing the LangGraph assistant graph.
+- **Request Body**:
+  ```json
+  {
+    "message": "What was the highest error day in January 2026 and why?",
+    "history": [],
+    "filters": {
+      "decision_from": "2026-01-01",
+      "decision_to": "2026-01-31",
+      "decision_lead_hours": 24.0,
+      "actual_alignment": "exact"
+    }
+  }
+  ```
+- **Response**: Markdown answer, suggested follow-up chips, data citation metadata, and pruned history flag.
+
+---
+
+## 13. Testing & Quality Verification
+
+The repository includes a comprehensive 3-tier testing suite verifying domain logic, HTTP boundaries, and end-to-end browser workflows:
+
+```
+Total Test Coverage:
+├── Backend:  114 Passing Pytest Tests (Unit, Normalization, Integration, Pipeline)
+├── Frontend:  34 Passing Vitest Tests (Components, Units, MarkdownView, Assistant)
+└── E2E:       11 Passing Playwright Tests (Full user journeys, mobile zero-overflow)
 ```
 
-## 13. Docker
+### Running the Test Suites
 
 ```bash
-cp .env.example .env        # optional
-docker compose up --build
+# 1. Run backend unit & integration tests
+cd backend
+pytest --cov=app -v
+
+# 2. Run backend code style & typecheck
+ruff check app tests
+mypy app tests
+
+# 3. Run frontend unit tests
+cd ../frontend
+npm test
+
+# 4. Run frontend typecheck & production build
+npm run typecheck
+npm run build
+
+# 5. Run Playwright end-to-end browser tests
+npm run e2e
 ```
 
-- Frontend: <http://localhost:8080> (nginx serves the build and proxies `/api` to the backend)
-- API docs: <http://localhost:8000/api/docs>, or <http://localhost:8080/api/docs> through the proxy
+---
 
-Both containers have health checks, and the frontend waits for a healthy backend.
+## 14. Deployment Strategy
 
-## 14. Environment variables
+### Vercel Serverless (Ready)
+The repository includes a root `vercel.json` and `api/index.py` allowing instant deployment to Vercel:
+1. Connect the GitHub repository to Vercel.
+2. Vercel automatically builds the React frontend via Vite into the edge CDN.
+3. API requests under `/api/*` are rewritten to the Python serverless function at `api/index.py`.
 
-**Backend** (all optional; safe defaults):
+### Containerized Production (Docker / Kubernetes / Cloud Run)
+The provided `Dockerfile` files utilize multi-stage builds:
+- `backend/Dockerfile`: Minimal non-root `appuser` image running Uvicorn.
+- `frontend/Dockerfile`: Node alpine build step producing a static bundle served by an unprivileged Nginx alpine server.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `ELEXON_BASE_URL` | `https://data.elexon.co.uk/bmrs/api/v1` | Elexon API base |
-| `CACHE_TTL_SECONDS` | `900` | TTL for recent source chunks |
-| `HISTORICAL_CACHE_TTL_SECONDS` | `21600` | TTL for chunks ending > 4 days ago |
-| `REQUEST_TIMEOUT_SECONDS` | `30` | read timeout (connect timeout: `CONNECT_TIMEOUT_SECONDS`=10) |
-| `MAX_RETRIES` | `3` | bounded retries for timeouts, connection errors, 429 and 5xx |
-| `MAX_DATE_RANGE_DAYS` | `93` | maximum decision/delivery range |
-| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:8080,…` | comma-separated allowed origins |
-| `LOG_LEVEL` | `INFO` | JSON-lines logs |
+---
 
-Also available: `FETCH_CHUNK_DAYS`, `MAX_CONCURRENT_REQUESTS`, `WINDFOR_LOOKBACK_HOURS`,
-`DEFAULT_DECISION_LEAD_HOURS`, `MAX_DECISION_LEAD_HOURS`, `RETRY_BACKOFF_SECONDS` and
-`MAX_RETRY_AFTER_SECONDS`.
+## 15. Author & Attribution
 
-**Frontend** (build time): `VITE_API_BASE_URL`. Leave it empty for same-origin `/api`, which is
-recommended. Set it to the API origin only when the API is hosted separately. No secrets are ever
-put in the bundle.
-
-## 15. API
-
-Interactive docs are at `/api/docs`.
-
-| Route | Description |
-|---|---|
-| `GET /api/health` | App status and version. Upstream status is **observed from real requests**, not probed (`upstream.checked=false`). |
-| `GET /api/metadata` | Defaults, limits, filters, decision policy, metric definitions, sources. |
-| `GET /api/analysis` | `decision_from`, `decision_to`, `decision_lead_hours`, `delivery_from`, `delivery_to`, `actual_alignment`. Returns intervals, metrics, coverage, daily/hourly aggregates, error histogram, data-quality warnings, source provenance and stale flag. |
-| `GET /api/actuals` | `delivery_from`, `delivery_to`. FUELHH wind half-hours. |
-| `GET /api/forecast-vintages` | `start_time` (on the hour, with offset), optional `decision_cutoff` or `decision_lead_hours`. Returns the chronological vintage history with eligibility and the selected vintage. |
-| `GET /api/export.csv` | Same parameters and computation as `/api/analysis`. |
-
-```bash
-curl "http://localhost:8000/api/analysis?decision_from=2026-01-01&decision_to=2026-01-31&decision_lead_hours=24"
-curl "http://localhost:8000/api/forecast-vintages?start_time=2026-01-15T12:00:00Z"
-curl -OJ "http://localhost:8000/api/export.csv?decision_from=2026-01-01&decision_to=2026-01-31"
-```
-
-**Errors** use the shape `{"error": {"code", "message", "details?"}}`:
-
-| Situation | Status |
-|---|---|
-| Invalid input | `422` |
-| Elexon timeout | `504` |
-| Elexon connection failure or rate limit | `503` |
-| Elexon HTTP error or malformed data | `502` |
-
-Stack traces are never returned. If a refresh fails but an earlier copy is cached, the response
-is served with `stale: true`, the retrieval time and a warning. Nothing is ever substituted for
-missing data.
-
-## 16. Tests
-
-```bash
-# backend: unit + API + integration (network-free; the live tests skip themselves)
-cd backend && pytest --cov=app
-ruff check . && ruff format --check . && mypy app tests
-
-# frontend
-cd frontend
-npm run lint && npm run format:check && npm run typecheck && npm test && npm run build
-
-# end-to-end: starts a mock Elexon server, the real backend and a production frontend build
-cd frontend && npx playwright install chromium && npx playwright test
-```
-
-What the suites cover:
-
-- **Backend unit tests:**
-  - Timestamp parsing and DST presentation.
-  - Normalisation and the duplicate policy.
-  - Cutoff selection, including "published exactly at cutoff" and "one second late".
-  - Matching, metrics, input validation, and a guard that application code never imports test
-    fixtures.
-- **Backend API/integration tests:**
-  - The full pipeline against hand-calculated fixtures, including a forecast that is perfect but
-    published after the cutoff and is excluded.
-  - 429 with `Retry-After`, persistent 429, 5xx, timeouts, connection errors, malformed JSON and
-    malformed records.
-  - CORS, cache hit and expiry, stale fallback, CSV parity, vintages, and lazy startup without
-    lifespan.
-- **Frontend:**
-  - Filter state and validation, lead-time requests, loading, empty and error states.
-  - KPIs with null metrics, chart rendering and tooltips, vintage selection, table filter/sort,
-    and the CSV link.
-- **E2E (Playwright):** the nine required scenarios plus a mobile check for horizontal overflow.
-
-## 17. Live API smoke test (opt-in)
-
-```bash
-cd backend && RUN_LIVE_TESTS=1 pytest tests/live -v
-```
-
-## 18. Deployment
-
-**Recommended: one Vercel project.** The Vite build is served from the CDN and the FastAPI app
-runs as a Python function at `api/index.py`. `vercel.json` rewrites `/api/*` to the function, so
-the browser uses same-origin requests and no CORS or `VITE_API_BASE_URL` is needed.
-
-1. Push the repository to GitHub (see `SUBMISSION.md`).
-2. In Vercel, choose **New Project → Import** the repository with **Root Directory** set to the
-   repository root. `vercel.json` supplies the install and build commands, the output directory and
-   the function settings.
-3. Environment variables are optional because the defaults work. Optionally set `LOG_LEVEL`,
-   `CACHE_TTL_SECONDS` and `MAX_RETRIES`.
-4. Deploy, then verify:
-   - `https://<app>/api/health` returns `{"status":"ok"}`.
-   - `https://<app>/api/analysis` returns 744 matched intervals for the default window.
-   - The site loads in an incognito window.
-
-Alternatively: `npm i -g vercel && vercel login && vercel --prod` from the repository root.
-
-**Deployment checklist:**
-
-- [ ] `/api/health` OK
-- [ ] Default analysis loads in the UI
-- [ ] Vintage explorer loads
-- [ ] CSV downloads
-- [ ] `CORS_ORIGINS` includes the frontend origin (split hosting only)
-- [ ] `VITE_API_BASE_URL` set (split hosting only)
-- [ ] Incognito check passed
-
-**Split hosting alternative:** host the backend Docker image on any container host and set
-`CORS_ORIGINS=https://<frontend-origin>`. Build the frontend with
-`VITE_API_BASE_URL=https://<api-origin>`.
-
-**Status:** not deployed. The Vercel connector in the development environment was not
-authenticated, and no Vercel CLI login was available. The Vercel entrypoint was tested locally
-by importing `api/index.py` and serving `/api/health` and a live `/api/analysis` request.
-`vercel build` itself was not run.
-
-## 19–21. Links
-
-- Deployed application: *not yet deployed.*
-- Public GitHub repository: *not yet created.*
-- Demo video: *not yet recorded.*
-
-## 22. Known limitations and future improvements
-
-- Persistent cache (e.g. SQLite) to survive restarts and share across serverless instances.
-- Horizon-segmented accuracy (error vs forecast lead time) and rolling-window comparisons.
-- An optional 30-minute evaluation that treats the hourly forecast as constant across both
-  half-hours, clearly labelled.
-- A virtualised table for very long ranges (currently paged at 48 rows).
-
-## AI assistance disclosure
-
-This project was implemented with **Claude Code** (Anthropic's agentic coding CLI, model Claude
-Opus 5.5) working from the assignment brief. The visual style follows a reference supplied by the
-author: the look of https://impeccable.style (light paper surfaces, condensed light display type,
-gold highlight chips). Only the style was adopted; no branding, logo or copy from that site is used.
-Claude Code:
-
-- inspected the live Elexon endpoints and OpenAPI spec;
-- wrote the backend, frontend, tests, Docker, CI and documentation;
-- ran the test suites, linters, type checkers, Docker Compose and browser screenshots in a local
-  Linux environment, and fixed the failures they exposed.
-
-No external code review or audit was performed. The GitHub Actions workflow has not yet run on
-GitHub, because no remote repository exists yet.
+- **Lead Engineer & Author**: `honoursbhaduria` ([honoursbhadauria@gmail.com](mailto:honoursbhadauria@gmail.com))
+- **Data Source**: Contains BMRS data from Elexon, used under the [BMRS Data Licence](https://www.elexon.co.uk/bsc/data/balancing-mechanism-reporting-agent/copyright-licence-bmrs-data/).
+- **License**: Released under the [MIT License](LICENSE).

@@ -23,6 +23,12 @@ const STARTER_PROMPTS: ActionItem[] = [
   { label: "Why WAPE over MAPE?", query: "Why does this platform use WAPE instead of MAPE for wind scoring?" },
 ];
 
+const PRESET_WIDTHS = [
+  { label: "1/5", width: 330, title: "Compact (approx. 1/5 screen)" },
+  { label: "Std", width: 460, title: "Standard view" },
+  { label: "Wide", width: 660, title: "Wide view" },
+];
+
 export function WindyWidget() {
   const { filters } = useFilters();
   const [isOpen, setIsOpen] = useState(false);
@@ -30,6 +36,22 @@ export function WindyWidget() {
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<WindyMessage[]>([]);
   const [hasUnread, setHasUnread] = useState(false);
+
+  // Desktop user-adjustable panel width
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("windy_panel_width");
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 280 && parsed <= 900) return parsed;
+      }
+      return Math.min(420, Math.max(330, Math.round(window.innerWidth * 0.22)));
+    }
+    return 360;
+  });
+
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -59,6 +81,50 @@ export function WindyWidget() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen]);
+
+  // Dragging to resize in website view
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    resizeRef.current = {
+      startX: e.clientX,
+      startWidth: panelWidth,
+    };
+  }, [panelWidth]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing || !resizeRef.current) return;
+      const deltaX = resizeRef.current.startX - e.clientX;
+      const newWidth = Math.min(
+        Math.max(280, resizeRef.current.startWidth + deltaX),
+        Math.min(950, Math.round(window.innerWidth * 0.75))
+      );
+      setPanelWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      if (isResizing) {
+        setIsResizing(false);
+        resizeRef.current = null;
+        localStorage.setItem("windy_panel_width", String(panelWidth));
+      }
+    };
+
+    if (isResizing) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+    }
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+  }, [isResizing, panelWidth]);
 
   const handleOpen = () => {
     setIsOpen(true);
@@ -141,7 +207,7 @@ export function WindyWidget() {
 
   return (
     <>
-      {/* Floating Toggle Launcher (visible when closed, themed paper look, no green dot) */}
+      {/* Floating Toggle Launcher (visible when closed) */}
       {!isOpen && (
         <div className="fixed bottom-6 right-6 z-30 flex items-center gap-2">
           <button
@@ -178,32 +244,89 @@ export function WindyWidget() {
       )}
 
       {/* 
-        Side Toggle Panel (covers 1/5th space of the website on desktop, 
-        docked on the right, NO backdrop blur of normal site)
+        Mobile backdrop overlay: active ONLY on small screens (<640px)
+        Desktop website view has NO backdrop or blur, keeping normal site fully interactive!
+      */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/45 backdrop-blur-[1px] transition-opacity duration-200 sm:hidden"
+          onClick={() => setIsOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* 
+        Windy Chat Section:
+        - Mobile: sleek popup modal card (inset-x-3 bottom-3 top-14 rounded-2xl)
+        - Desktop: docked right-side panel with user-adjustable width (drag handle on left)
       */}
       {isOpen && (
         <aside
           role="dialog"
           aria-label="Windy"
-          className="fixed inset-y-0 right-0 z-40 flex h-full w-full sm:w-[340px] md:w-[360px] lg:w-1/5 lg:min-w-[310px] flex-col border-l border-[var(--rule-strong)] bg-[var(--paper-raised)] shadow-2xl transition-all duration-300 ease-in-out"
+          className="fixed inset-x-3 bottom-3 top-14 z-50 flex flex-col rounded-2xl border border-[var(--rule-strong)] bg-[var(--paper-raised)] shadow-2xl transition-all duration-150 sm:inset-y-0 sm:right-0 sm:left-auto sm:top-0 sm:bottom-0 sm:z-40 sm:rounded-none sm:border-y-0 sm:border-r-0 sm:border-l sm:shadow-2xl"
+          style={{
+            // On desktop view, width is controlled dynamically by the user via panelWidth
+            width: typeof window !== "undefined" && window.innerWidth >= 640 ? `${panelWidth}px` : undefined,
+          }}
         >
-          {/* Header - Themed Paper surface (NOT black, no green dot) */}
+          {/* Draggable Resizer Bar on Left Edge (Desktop website view only) */}
+          <div
+            onMouseDown={startResizing}
+            className="group absolute -left-1.5 top-0 bottom-0 z-50 hidden sm:flex w-3 cursor-col-resize items-center justify-center transition-colors hover:bg-[var(--state)]/20 active:bg-[var(--state)]/40"
+            title="Drag to resize Windy width"
+          >
+            <div
+              className={`h-14 w-1 rounded-full transition-all duration-150 ${
+                isResizing
+                  ? "bg-[var(--state)] scale-y-125 shadow-sm"
+                  : "bg-[var(--rule-strong)] group-hover:bg-[var(--state)] group-hover:scale-y-110"
+              }`}
+            />
+          </div>
+
+          {/* Mobile Sheet Grabber Pill */}
+          <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-[var(--rule-strong)] sm:hidden" />
+
+          {/* Header - Themed Paper surface (Not black, follows theme) */}
           <div className="flex items-center justify-between border-b border-[var(--rule)] bg-gradient-to-b from-[var(--paper-raised)] to-[var(--paper-deep)] px-4 py-3 shadow-xs">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl border border-[var(--rule)] bg-[var(--paper-raised)] p-1.5 shadow-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[var(--rule)] bg-[var(--paper-raised)] p-1.5 shadow-xs">
                 <img src={windIcon} alt="Windy" className="h-full w-full object-contain" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="block font-sans text-[1.02rem] font-bold tracking-tight text-[var(--ink)]">
                   Windy
                 </span>
-                <p className="text-[0.72rem] text-[var(--text-muted)]">
+                <p className="truncate text-[0.72rem] text-[var(--text-muted)]">
                   Helps you explore forecasts and data easily
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
+              {/* Desktop Width Presets */}
+              <div className="hidden sm:flex items-center gap-0.5 mr-1 border-r border-[var(--rule)] pr-1.5">
+                {PRESET_WIDTHS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => {
+                      setPanelWidth(preset.width);
+                      localStorage.setItem("windy_panel_width", String(preset.width));
+                    }}
+                    title={preset.title}
+                    className={`rounded px-1.5 py-0.5 text-[0.68rem] font-semibold transition-colors ${
+                      Math.abs(panelWidth - preset.width) < 25
+                        ? "bg-[var(--state)] text-white"
+                        : "text-[var(--text-muted)] hover:bg-[var(--paper)] hover:text-[var(--ink)]"
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
               <button
                 type="button"
                 onClick={handleReset}
@@ -225,14 +348,14 @@ export function WindyWidget() {
             </div>
           </div>
 
-          {/* Messages Container (hidden scrollbars, full clarity) */}
+          {/* Messages Container (hidden scrollbars, smooth touch scroll on mobile) */}
           <div className="flex-1 space-y-4 overflow-x-hidden overflow-y-auto p-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             {messages.length === 0 && (
-              <div className="flex flex-col items-center justify-center space-y-5 py-6 text-center">
+              <div className="flex flex-col items-center justify-center space-y-5 py-5 text-center">
                 <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--rule)] bg-[var(--paper-deep)] p-2.5 shadow-xs">
                   <img src={windIcon} alt="Windy" className="h-full w-full object-contain" />
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-1 max-w-[420px]">
                   <h3 className="font-sans text-[1.12rem] font-bold text-[var(--ink)]">
                     Hello! I&apos;m Windy 🌬️
                   </h3>
@@ -316,7 +439,7 @@ export function WindyWidget() {
               </div>
             ))}
 
-            {/* Thinking / Loading Animation (theme styled, no green dot) */}
+            {/* Thinking / Loading Animation */}
             {isLoading && (
               <div className="flex gap-2.5 justify-start items-center">
                 <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-xl border border-[var(--rule)] bg-[var(--paper-deep)] p-1 shadow-xs">
