@@ -24,9 +24,9 @@ const STARTER_PROMPTS: ActionItem[] = [
 ];
 
 const PRESET_WIDTHS = [
-  { label: "1/5", width: 330, title: "Compact (approx. 1/5 screen)" },
-  { label: "Std", width: 460, title: "Standard view" },
-  { label: "Wide", width: 660, title: "Wide view" },
+  { label: "1/5", width: 330, title: "Compact (approx. 1/5th screen width)" },
+  { label: "Std", width: 480, title: "Standard view (480px)" },
+  { label: "Wide", width: 680, title: "Wide view (680px)" },
 ];
 
 export function WindyWidget() {
@@ -37,15 +37,15 @@ export function WindyWidget() {
   const [messages, setMessages] = useState<WindyMessage[]>([]);
   const [hasUnread, setHasUnread] = useState(false);
 
-  // Desktop user-adjustable panel width
+  // Desktop user-adjustable panel width (persisted in localStorage)
   const [panelWidth, setPanelWidth] = useState<number>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("windy_panel_width");
       if (saved) {
         const parsed = parseInt(saved, 10);
-        if (!isNaN(parsed) && parsed >= 280 && parsed <= 900) return parsed;
+        if (!isNaN(parsed) && parsed >= 280 && parsed <= 950) return parsed;
       }
-      return Math.min(420, Math.max(330, Math.round(window.innerWidth * 0.22)));
+      return Math.min(460, Math.max(330, Math.round(window.innerWidth * 0.22)));
     }
     return 360;
   });
@@ -82,19 +82,23 @@ export function WindyWidget() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen]);
 
-  // Dragging to resize in website view
-  const startResizing = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
-    resizeRef.current = {
-      startX: e.clientX,
-      startWidth: panelWidth,
-    };
-  }, [panelWidth]);
+  // Drag-to-resize logic in website (desktop) view
+  const startResizing = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsResizing(true);
+      resizeRef.current = {
+        startX: e.clientX,
+        startWidth: panelWidth,
+      };
+    },
+    [panelWidth]
+  );
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing || !resizeRef.current) return;
+      // Dragging left increases width; dragging right decreases width
       const deltaX = resizeRef.current.startX - e.clientX;
       const newWidth = Math.min(
         Math.max(280, resizeRef.current.startWidth + deltaX),
@@ -225,7 +229,7 @@ export function WindyWidget() {
           <button
             type="button"
             onClick={handleToggle}
-            className="relative flex h-13 w-13 items-center justify-center rounded-full border-2 border-[var(--state)] bg-[var(--paper-raised)] p-2 shadow-xl transition-transform duration-200 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-[var(--state)]/20"
+            className="relative flex h-14 w-14 items-center justify-center rounded-full border-2 border-[var(--state)] bg-[var(--paper-raised)] p-2 shadow-xl transition-transform duration-200 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-[var(--state)]/20"
             aria-label="Open Windy"
           >
             <img
@@ -244,8 +248,8 @@ export function WindyWidget() {
       )}
 
       {/* 
-        Mobile backdrop overlay: active ONLY on small screens (<640px)
-        Desktop website view has NO backdrop or blur, keeping normal site fully interactive!
+        Mobile Backdrop: ONLY rendered on mobile (<640px)
+        Desktop website view has NO backdrop and NO blur, keeping the dashboard interactive!
       */}
       {isOpen && (
         <div
@@ -257,35 +261,46 @@ export function WindyWidget() {
 
       {/* 
         Windy Chat Section:
-        - Mobile: sleek popup modal card (inset-x-3 bottom-3 top-14 rounded-2xl)
+        - Mobile: floating popup modal card (inset-x-3 bottom-3 top-12 rounded-2xl)
         - Desktop: docked right-side panel with user-adjustable width (drag handle on left)
       */}
       {isOpen && (
         <aside
           role="dialog"
           aria-label="Windy"
-          className="fixed inset-x-3 bottom-3 top-14 z-50 flex flex-col rounded-2xl border border-[var(--rule-strong)] bg-[var(--paper-raised)] shadow-2xl transition-all duration-150 sm:inset-y-0 sm:right-0 sm:left-auto sm:top-0 sm:bottom-0 sm:z-40 sm:rounded-none sm:border-y-0 sm:border-r-0 sm:border-l sm:shadow-2xl"
-          style={{
-            // On desktop view, width is controlled dynamically by the user via panelWidth
-            width: typeof window !== "undefined" && window.innerWidth >= 640 ? `${panelWidth}px` : undefined,
-          }}
+          className={`fixed inset-x-3 bottom-3 top-12 z-50 flex flex-col rounded-2xl border border-[var(--rule-strong)] bg-[var(--paper-raised)] shadow-2xl sm:inset-y-0 sm:right-0 sm:left-auto sm:top-0 sm:bottom-0 sm:z-40 sm:rounded-none sm:border-y-0 sm:border-r-0 sm:border-l ${
+            isResizing ? "transition-none select-none" : "transition-all duration-200 ease-out"
+          }`}
+          style={
+            {
+              // Custom CSS property used exclusively by desktop media query
+              "--panel-width": `${panelWidth}px`,
+              width: "var(--panel-width, 100%)",
+            } as React.CSSProperties
+          }
         >
           {/* Draggable Resizer Bar on Left Edge (Desktop website view only) */}
           <div
             onMouseDown={startResizing}
-            className="group absolute -left-1.5 top-0 bottom-0 z-50 hidden sm:flex w-3 cursor-col-resize items-center justify-center transition-colors hover:bg-[var(--state)]/20 active:bg-[var(--state)]/40"
-            title="Drag to resize Windy width"
+            className="group absolute -left-2.5 top-0 bottom-0 z-50 hidden sm:flex w-5 cursor-col-resize items-center justify-center transition-colors hover:bg-[var(--state)]/15 active:bg-[var(--state)]/30"
+            title="Drag left/right to resize Windy"
           >
             <div
-              className={`h-14 w-1 rounded-full transition-all duration-150 ${
+              className={`h-16 w-1 rounded-full transition-all duration-150 ${
                 isResizing
                   ? "bg-[var(--state)] scale-y-125 shadow-sm"
                   : "bg-[var(--rule-strong)] group-hover:bg-[var(--state)] group-hover:scale-y-110"
               }`}
             />
+            {/* Live resize width tooltip pill while dragging */}
+            {isResizing && (
+              <div className="absolute right-6 top-1/2 -translate-y-1/2 rounded-md bg-[var(--ink)] px-2 py-1 font-mono text-[0.72rem] text-white shadow-lg pointer-events-none">
+                {panelWidth}px
+              </div>
+            )}
           </div>
 
-          {/* Mobile Sheet Grabber Pill */}
+          {/* Mobile Sheet Grabber Pill (Mobile popup modal only) */}
           <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-[var(--rule-strong)] sm:hidden" />
 
           {/* Header - Themed Paper surface (Not black, follows theme) */}
@@ -304,9 +319,9 @@ export function WindyWidget() {
               </div>
             </div>
 
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0">
               {/* Desktop Width Presets */}
-              <div className="hidden sm:flex items-center gap-0.5 mr-1 border-r border-[var(--rule)] pr-1.5">
+              <div className="hidden sm:flex items-center gap-1 mr-1 border-r border-[var(--rule)] pr-2">
                 {PRESET_WIDTHS.map((preset) => (
                   <button
                     key={preset.label}
@@ -317,8 +332,8 @@ export function WindyWidget() {
                     }}
                     title={preset.title}
                     className={`rounded px-1.5 py-0.5 text-[0.68rem] font-semibold transition-colors ${
-                      Math.abs(panelWidth - preset.width) < 25
-                        ? "bg-[var(--state)] text-white"
+                      Math.abs(panelWidth - preset.width) < 30
+                        ? "bg-[var(--state)] text-white shadow-xs"
                         : "text-[var(--text-muted)] hover:bg-[var(--paper)] hover:text-[var(--ink)]"
                     }`}
                   >
@@ -343,7 +358,7 @@ export function WindyWidget() {
                 className="rounded-lg border border-transparent p-1.5 text-[var(--text-muted)] transition-colors hover:border-[var(--rule)] hover:bg-[var(--paper)] hover:text-[var(--ink)]"
                 aria-label="Close Windy drawer"
               >
-                <X className="h-4.5 w-4.5" />
+                <X className="h-5 w-5" />
               </button>
             </div>
           </div>
@@ -368,7 +383,7 @@ export function WindyWidget() {
                   <span className="text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--text-faint)]">
                     Suggested Questions
                   </span>
-                  <div className="flex flex-col gap-2">
+                  <div className={`grid grid-cols-1 ${panelWidth >= 520 ? "sm:grid-cols-2" : "grid-cols-1"} gap-2`}>
                     {STARTER_PROMPTS.map((starter, idx) => (
                       <button
                         key={idx}
@@ -397,7 +412,7 @@ export function WindyWidget() {
                 )}
 
                 <div
-                  className={`relative rounded-2xl px-3.5 py-2.5 shadow-xs text-[0.86rem] min-w-0 break-words ${
+                  className={`relative rounded-2xl px-3.5 py-2.5 shadow-xs text-[0.86rem] min-w-0 overflow-hidden break-words ${
                     msg.role === "user"
                       ? "max-w-[85%] bg-[var(--state)] text-white rounded-br-none"
                       : "flex-1 max-w-[calc(100%-2.5rem)] bg-[var(--paper-deep)] border border-[var(--rule)] text-[var(--ink)] rounded-bl-none"
@@ -476,7 +491,7 @@ export function WindyWidget() {
               <button
                 type="submit"
                 disabled={!input.trim() || isLoading}
-                className="flex h-9.5 w-9.5 items-center justify-center rounded-xl bg-[var(--state)] text-white shadow-xs transition-transform hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--state)] text-white shadow-xs transition-transform hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
                 aria-label="Send message"
               >
                 <Send className="h-4 w-4" />

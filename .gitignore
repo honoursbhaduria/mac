@@ -24,3 +24,5 @@ frontend/test-results/
 .DS_Store
 .vercel/
 *.log
+.vercel
+.env*

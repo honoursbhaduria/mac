@@ -56,8 +56,8 @@ export function AppShell() {
               GB Wind <span className="text-[var(--text-muted)]">Forecast</span>
             </span>
           </NavLink>
-          <nav aria-label="Main">
-            <ul className="flex flex-wrap items-center gap-x-6 gap-y-0">
+          <nav aria-label="Main" className="max-w-full overflow-x-auto [scrollbar-width:none]">
+            <ul className="flex items-center gap-x-4 sm:gap-x-6 gap-y-0 whitespace-nowrap">
               {NAV.map(({ to, label }) => (
                 <li key={to}>
                   <NavLink to={{ pathname: to, search }} end={to === "/"} className="nav-link">
