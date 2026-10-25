@@ -1,6 +1,8 @@
 import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { MarkdownView } from "../components/windy/MarkdownView";
+import { getChatFromCookies, saveChatToCookies } from "../components/windy/WindyWidget";
+import type { WindyMessage } from "../types/windy";
 import { renderInShell } from "./render";
 
 describe("MarkdownView", () => {
@@ -25,7 +27,43 @@ This is **bold text** and \`inline code\`.`;
   });
 });
 
+describe("WindyWidget Cookie Persistence", () => {
+  beforeEach(() => {
+    // Clear cookies before each test
+    document.cookie = "windy_chat_history=; path=/; max-age=0";
+  });
+
+  it("saves messages to cookies and reads them back", () => {
+    const testMessages: WindyMessage[] = [
+      { id: "u-1", role: "user", content: "What is MAE?", timestamp: "10:00" },
+      { id: "a-1", role: "assistant", content: "MAE is Mean Absolute Error.", timestamp: "10:01" },
+    ];
+    saveChatToCookies(testMessages);
+    expect(document.cookie).toContain("windy_chat_history=");
+
+    const retrieved = getChatFromCookies();
+    expect(retrieved).toHaveLength(2);
+    expect(retrieved[0]?.content).toBe("What is MAE?");
+    expect(retrieved[1]?.content).toBe("MAE is Mean Absolute Error.");
+  });
+
+  it("clears cookies when empty messages array is saved", () => {
+    const testMessages: WindyMessage[] = [
+      { id: "u-1", role: "user", content: "Test message", timestamp: "10:00" },
+    ];
+    saveChatToCookies(testMessages);
+    expect(getChatFromCookies()).toHaveLength(1);
+
+    saveChatToCookies([]);
+    expect(getChatFromCookies()).toHaveLength(0);
+  });
+});
+
 describe("WindyWidget", () => {
+  beforeEach(() => {
+    document.cookie = "windy_chat_history=; path=/; max-age=0";
+  });
+
   it("renders floating launcher and toggles open/close", async () => {
     renderInShell(<div data-testid="page-content" />);
     const launcher = screen.getByLabelText("Open Windy");

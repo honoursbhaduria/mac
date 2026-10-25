@@ -29,13 +29,57 @@ const PRESET_WIDTHS = [
   { label: "Wide", width: 680, title: "Wide view (680px)" },
 ];
 
+const COOKIE_NAME = "windy_chat_history";
+const MAX_COOKIE_BYTES = 3600; // safe threshold below 4096 bytes per cookie limit
+
+export function getChatFromCookies(): WindyMessage[] {
+  if (typeof document === "undefined") return [];
+  try {
+    const match = document.cookie.match(new RegExp(`(?:^|; )${COOKIE_NAME}=([^;]*)`));
+    if (!match || !match[1]) return [];
+    const decoded = decodeURIComponent(match[1]);
+    const parsed = JSON.parse(decoded);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch (err) {
+    console.warn("Failed to load chat from cookies", err);
+  }
+  return [];
+}
+
+export function saveChatToCookies(messages: WindyMessage[]): void {
+  if (typeof document === "undefined") return;
+  try {
+    if (messages.length === 0) {
+      document.cookie = `${COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax`;
+      return;
+    }
+    // Keep the most recent messages that fit within the 4KB cookie limit
+    let toSave = [...messages];
+    let encoded = encodeURIComponent(JSON.stringify(toSave));
+    while (encoded.length > MAX_COOKIE_BYTES && toSave.length > 1) {
+      toSave.shift(); // remove oldest message to respect cookie payload limits
+      encoded = encodeURIComponent(JSON.stringify(toSave));
+    }
+    document.cookie = `${COOKIE_NAME}=${encoded}; path=/; max-age=${30 * 24 * 60 * 60}; SameSite=Lax`;
+  } catch (err) {
+    console.warn("Failed to save chat to cookies", err);
+  }
+}
+
 export function WindyWidget() {
   const { filters } = useFilters();
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [messages, setMessages] = useState<WindyMessage[]>([]);
+  const [messages, setMessages] = useState<WindyMessage[]>(() => getChatFromCookies());
   const [hasUnread, setHasUnread] = useState(false);
+
+  // Sync messages to cookies whenever history changes
+  useEffect(() => {
+    saveChatToCookies(messages);
+  }, [messages]);
 
   // Desktop user-adjustable panel width (persisted in localStorage)
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -207,6 +251,7 @@ export function WindyWidget() {
 
   const handleReset = () => {
     setMessages([]);
+    saveChatToCookies([]);
   };
 
   return (
