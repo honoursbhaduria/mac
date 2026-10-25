@@ -19,8 +19,14 @@ function getFormattedTime(): string {
 const STARTER_PROMPTS: ActionItem[] = [
   { label: "January 2026 KPIs", query: "What are the overall forecast accuracy KPIs for January 2026?" },
   { label: "Highest error day", query: "Which day in January had the largest forecast error and why?" },
-  { label: "Why 24h lead time?", query: "Why is the decision lead time 24 hours and how does it prevent hindsight bias?" },
-  { label: "Why WAPE over MAPE?", query: "Why does this platform use WAPE instead of MAPE for wind scoring?" },
+  {
+    label: "Why 24h lead time?",
+    query: "Why is the decision lead time 24 hours and how does it prevent hindsight bias?",
+  },
+  {
+    label: "Why WAPE over MAPE?",
+    query: "Why does this platform use WAPE instead of MAPE for wind scoring?",
+  },
 ];
 
 export function WindyWidget() {
@@ -162,11 +168,7 @@ export function WindyWidget() {
             className="relative flex h-13 w-13 items-center justify-center rounded-full border-2 border-[var(--state)] bg-[var(--paper-raised)] p-2 shadow-xl transition-transform duration-200 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-[var(--state)]/20"
             aria-label="Open Windy"
           >
-            <img
-              src={windIcon}
-              alt="Windy"
-              className="h-full w-full object-contain filter drop-shadow-xs"
-            />
+            <img src={windIcon} alt="Windy" className="h-full w-full object-contain filter drop-shadow-xs" />
             {hasUnread && (
               <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--gold)] opacity-75" />
@@ -237,7 +239,8 @@ export function WindyWidget() {
                     Hello! I&apos;m Windy 🌬️
                   </h3>
                   <p className="text-[0.84rem] leading-relaxed text-[var(--text-muted)]">
-                    I help you navigate wind forecasts, evaluate accuracy metrics, and check outturn data easily.
+                    I help you navigate wind forecasts, evaluate accuracy metrics, and check outturn data
+                    easily.
                   </p>
                 </div>
 

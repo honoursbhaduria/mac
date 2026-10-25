@@ -25,7 +25,10 @@ export function MarkdownView({ content }: MarkdownViewProps) {
             <tbody className="divide-y divide-[var(--rule)] bg-[var(--paper-raised)]" {...props} />
           ),
           th: ({ ...props }) => (
-            <th className="border-b border-[var(--rule)] px-3 py-2 font-semibold text-[var(--ink)] whitespace-nowrap bg-[var(--paper-deep)]" {...props} />
+            <th
+              className="border-b border-[var(--rule)] px-3 py-2 font-semibold text-[var(--ink)] whitespace-nowrap bg-[var(--paper-deep)]"
+              {...props}
+            />
           ),
           td: ({ ...props }) => (
             <td className="px-3 py-2 text-[var(--text)] align-top leading-snug" {...props} />
@@ -53,13 +56,20 @@ export function MarkdownView({ content }: MarkdownViewProps) {
             <h2 className="mb-2 mt-3 font-sans text-[1rem] font-bold text-[var(--ink)]" {...props} />
           ),
           h3: ({ ...props }) => (
-            <h3 className="mb-1.5 mt-2.5 font-sans text-[0.95rem] font-semibold text-[var(--ink)]" {...props} />
+            <h3
+              className="mb-1.5 mt-2.5 font-sans text-[0.95rem] font-semibold text-[var(--ink)]"
+              {...props}
+            />
           ),
           h4: ({ ...props }) => (
             <h4 className="mb-1 mt-2 font-sans text-[0.9rem] font-semibold text-[var(--ink)]" {...props} />
           ),
-          ul: ({ ...props }) => <ul className="my-1.5 list-disc space-y-1 pl-4 text-[var(--text)]" {...props} />,
-          ol: ({ ...props }) => <ol className="my-1.5 list-decimal space-y-1 pl-4 text-[var(--text)]" {...props} />,
+          ul: ({ ...props }) => (
+            <ul className="my-1.5 list-disc space-y-1 pl-4 text-[var(--text)]" {...props} />
+          ),
+          ol: ({ ...props }) => (
+            <ol className="my-1.5 list-decimal space-y-1 pl-4 text-[var(--text)]" {...props} />
+          ),
           li: ({ ...props }) => <li className="leading-relaxed break-words" {...props} />,
           strong: ({ ...props }) => <strong className="font-semibold text-[var(--ink)]" {...props} />,
           a: ({ ...props }) => (

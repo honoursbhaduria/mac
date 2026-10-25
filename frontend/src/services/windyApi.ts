@@ -1,10 +1,7 @@
 import { apiUrl, ApiError } from "./api";
 import type { WindyChatRequest, WindyChatResponse, WindyStatusResponse } from "../types/windy";
 
-export async function sendWindyChat(
-  req: WindyChatRequest,
-  signal?: AbortSignal,
-): Promise<WindyChatResponse> {
+export async function sendWindyChat(req: WindyChatRequest, signal?: AbortSignal): Promise<WindyChatResponse> {
   let res: Response;
   try {
     res = await fetch(apiUrl("/windy/chat"), {
@@ -26,11 +23,7 @@ export async function sendWindyChat(
   }
 
   if (!res.ok) {
-    throw new ApiError(
-      res.status,
-      "windy_error",
-      `Windy service returned an error (HTTP ${res.status}).`,
-    );
+    throw new ApiError(res.status, "windy_error", `Windy service returned an error (HTTP ${res.status}).`);
   }
 
   return (await res.json()) as WindyChatResponse;
