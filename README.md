@@ -14,7 +14,7 @@ An end-to-end decision intelligence platform and conversational copilot built fo
 
 | Required Deliverable | Link & Details |
 | :--- | :--- |
-| **Link to Vercel / Heroku App** | 🔗 **[https://windy-honoursbhaduria.vercel.app](https://windy-honoursbhaduria.vercel.app)** *(Vercel Serverless Production Deployment)*<br>• Local Container Portal: `http://localhost:8080`<br>• Interactive API Swagger Docs: `http://localhost:8000/api/docs` |
+| **Link to Vercel / Heroku App** | 🔗 **[[[https://windy-honoursbhaduria.vercel.app](https://windy-kappa.vercel.app/)](https://windy-kappa.vercel.app/)]([https://windy-honoursbhaduria.vercel.app](https://windy-kappa.vercel.app/))** *(Vercel Serverless Production Deployment)*<br>• Local Container Portal: `http://localhost:8080`<br>• Interactive API Swagger Docs: `http://localhost:8000/api/docs` |
 | **How to Start the Application** | ⚡ **[Jump to Quickstart](#how-to-start-the-application)**: One-command launch with `docker compose up --build -d` |
 | **Details of Files and Directories** | 📁 **[Jump to Project Structure](#details-of-the-files-and-directories-present)**: Full file-by-file directory breakdown |
 | **Public GitHub Repository** | 🐙 **[https://github.com/honoursbhaduria/windy.git](https://github.com/honoursbhaduria/windy.git)** |
